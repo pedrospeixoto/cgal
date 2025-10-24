@@ -1,20 +1,72 @@
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
-#include <CGAL/Triangulation_2.h>
+#include <CGAL/Constrained_Delaunay_triangulation_2.h>
+#include <CGAL/IO/write_VTU.h>
+#include <CGAL/IO/io.h>
 #include <CGAL/draw_triangulation_2.h>
+#include <CGAL/Delaunay_triangulation_2.h>
+#include <CGAL/Delaunay_triangulation_adaptation_traits_2.h>
 #include <fstream>
 #include <iostream>
+#include <iterator>
+#include <vector>
+#include <algorithm>
+#include <CGAL/convex_hull_2.h>
+#include <CGAL/Delaunay_triangulation_adaptation_traits_2.h>
+#include <CGAL/Delaunay_triangulation_adaptation_policies_2.h>
+#include <CGAL/draw_voronoi_diagram_2.h>
 
 typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
-typedef CGAL::Triangulation_2<K>                            Triangulation;
+typedef CGAL::Constrained_Delaunay_triangulation_2<K>      Triangulation;
 typedef Triangulation::Point                                Point;
+// typedefs to get a Site_2 type (used by some CGAL adaptors)
+typedef CGAL::Delaunay_triangulation_adaptation_traits_2<Triangulation>                 AT;
+typedef CGAL::Delaunay_triangulation_caching_degeneracy_removal_policy_2<Triangulation> AP;
+typedef CGAL::Voronoi_diagram_2<Triangulation,AT,AP>                                    VD;
+
+// typedef for the result type of the point location
+typedef AT::Site_2                    Site_2;
 
 int main(int argc, char* argv[]) {
   std::ifstream in((argc>1)?argv[1]:"data/triangulation_prog1_copy.cin");
   std::istream_iterator<Point> begin(in);
   std::istream_iterator<Point> end;
 
-  Triangulation t;
-  t.insert(begin, end);
+  // Read points into a vector so we can compute the convex hull
+  std::vector<Point> points;
+  std::copy(begin, end, std::back_inserter(points));
+
+    Triangulation t;
+  if(!points.empty()) t.insert(points.begin(), points.end());
+
+  VD vd;
+  // Convert points to Site_2 (example)
+  std::vector<Site_2> sites;
+  sites.reserve(points.size());
+  for(const Point& p : points) {
+    // construct Site_2 from Point (Site_2 may be a Point_2 type)
+    Site_2 site(p);
+    sites.emplace_back(site);
+    vd.insert(site);
+  }
+  // print the sites inserted
+  for(const Site_2& site : sites) {
+    std::cout << "Inserted site: " << site << std::endl;
+  }
+  assert( vd.is_valid() );
+
+  // Compute convex hull of the input points and insert constraints along the hull
+  if(points.size() >= 2) {
+    std::vector<Point> hull;
+    CGAL::convex_hull_2(points.begin(), points.end(), std::back_inserter(hull));
+    if(hull.size() >= 2) {
+      std::cout << "Inserting " << hull.size() << " constraint edges along convex hull" << std::endl;
+      for(std::size_t i = 0, n = hull.size(); i < n; ++i) {
+        const Point& p = hull[i];
+        const Point& q = hull[(i+1) % n];
+        t.insert_constraint(p, q);
+      }
+    }
+  }
 
   std::cout << "=== Triangulation Properties ===" << std::endl;
   std::cout << "Number of vertices: " << t.number_of_vertices() << std::endl;
@@ -61,8 +113,20 @@ int main(int argc, char* argv[]) {
     }
     std::cout << std::endl;
   }
+  
+
+
+  // Write VTU using CGAL's Mesh_2 writer (ASCII mode)
+  {
+    std::ofstream ofs((argc>2)? argv[2] : "triangulation.vtu");
+    if(ofs) {
+      CGAL::IO::write_VTU(ofs, t, CGAL::IO::ASCII);
+    } else {
+      std::cerr << "Could not open output file for VTU." << std::endl;
+    }
+  }
 
   CGAL::draw(t);
-
+  CGAL::draw(vd);
   return EXIT_SUCCESS;
 }
